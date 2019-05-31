@@ -26,21 +26,21 @@ data_path = os.getcwd()
 
 
 def get_data(data_folder):
-    data_files = glob.glob(os.path.join(data_folder, "data/*.npy"))
-    data = np.load(os.path.join(data_folder, "data/final_train_data3.npy"))
+    data_files = glob.glob(os.path.join(data_folder, "new_data/*.npy"))
+    data = np.load(os.path.join(data_folder, "new_data/train_data_0a.npy"))
     data_ix = 0
     for data_file in data_files:
-        if data_ix == 1:
+        if data_ix == 21:
             break
         if data_ix > 0:
             data = np.append(data, np.load(data_file), axis=0)
         data_ix += 1
 
-    labels_files = glob.glob(os.path.join(data_folder, "labels/*.npy"))
-    labels = np.load(os.path.join(data_folder, "labels/final_train_labels3.npy"))
+    labels_files = glob.glob(os.path.join(data_folder, "new_labels/*.npy"))
+    labels = np.load(os.path.join(data_folder, "new_labels/train_labels_0a.npy"))
     labels_ix = 0
     for labels_file in labels_files:
-        if labels_ix == 1:
+        if labels_ix == 9:
             break
         if labels_ix > 0:
             labels = np.append(labels, np.load(labels_file), axis=0)
@@ -51,17 +51,13 @@ def get_data(data_folder):
 X, y = get_data(data_path)
 
 # Split train and valid
-X_train, X_valid, y_train, y_valid = train_test_split(X, y, test_size=0.1,
-                                                      random_state=2018)
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1,
-                                                    random_state=2018)
+X_train, X_valid, y_train, y_valid = train_test_split(X, y, test_size=0.1)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1)
 
 input_tensor = Input((im_height, im_width, 3))
 
 base_model = ResNet50(include_top=False, weights="imagenet",
                       input_tensor=input_tensor)
-
-print(base_model.summary())
 
 x32 = base_model.get_layer("add_16").output
 x16 = base_model.get_layer("add_13").output
@@ -96,9 +92,9 @@ print(fcn_model.summary())
 n_folds = 5
 #skf = StratifiedKFold(y, n_folds=n_folds, shuffle=True)
 
-fcn_model.load_weights(os.path.join(data_path, "deeplab-weights.h5"))
+#fcn_model.load_weights(os.path.join(data_path, "deeplab-weights.h5"))
 
-'''results = fcn_model.fit(X_train, y_train, batch_size=4, epochs=3,
+results = fcn_model.fit(X_train, y_train, batch_size=4, epochs=30,
                         validation_data=(X_valid, y_valid))
 
 plt.figure(figsize=(8, 8))
@@ -109,7 +105,7 @@ plt.ylabel("log_loss")
 plt.legend()
 plt.show()
 
-fcn_model.save_weights(os.path.join(data_path, "deeplab-weights.h5"))'''
+fcn_model.save_weights(os.path.join(data_path, "deeplab-weights.h5"))
 
 #preds_train = fcn_model.predict(X_train, verbose=True)
 #preds_val = fcn_model.predict(X_test, verbose=True)
