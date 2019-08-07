@@ -13,10 +13,15 @@ from keras.applications import ResNet50
 from keras.models import Model
 from keras.layers import Input, Convolution2D, Lambda, Add, Reshape, Activation
 from keras.optimizers import Adam
+from keras.callbacks import EarlyStopping, ReduceLROnPlateau
 import numpy as np
-from sklearn.model_selection import train_test_split, StratifiedKFold
 import matplotlib.pyplot as plt
-import glob
+from skimage.io import imread
+import tifffile as tiff
+
+plt.style.use("ggplot")
+
+BATCH_SIZE = 4
 
 nb_labels = 6
 im_height = 160
@@ -25,34 +30,40 @@ im_width = 160
 data_path = os.getcwd()
 
 
-def get_data(data_folder):
-    data_files = glob.glob(os.path.join(data_folder, "new_data/*.npy"))
-    data = np.load(os.path.join(data_folder, "new_data/train_data_0a.npy"))
-    data_ix = 0
-    for data_file in data_files:
-        if data_ix == 21:
-            break
-        if data_ix > 0:
-            data = np.append(data, np.load(data_file), axis=0)
-        data_ix += 1
+def data_gen(img_folder, mask_folder, batch_size):
+    c = 0
+    n = os.listdir(img_folder)
+    o = os.listdir(mask_folder)
 
-    labels_files = glob.glob(os.path.join(data_folder, "new_labels/*.npy"))
-    labels = np.load(os.path.join(data_folder, "new_labels/train_labels_0a.npy"))
-    labels_ix = 0
-    for labels_file in labels_files:
-        if labels_ix == 9:
-            break
-        if labels_ix > 0:
-            labels = np.append(labels, np.load(labels_file), axis=0)
-        labels_ix += 1
-    return data, labels
+    while True:
+        img = np.zeros((batch_size, 160, 160, 3)).astype("float")
+        mask = np.zeros((batch_size, 160, 160, 6)).astype("bool")
+
+        for i in range(c, c+batch_size):
+            train_img = imread(img_folder+"/"+n[i])/255.
+            img[i-c] = train_img
+            train_mask = tiff.imread(mask_folder+"/"+o[i])
+            mask[i-c] = train_mask
+
+        c += batch_size
+        if (c+batch_size >= len(os.listdir(img_folder))):
+            c = 0
+
+        yield img, mask
 
 
-X, y = get_data(data_path)
+train_frame_path = "data2/image_data"
+train_mask_path = "labels2/image_labels"
 
-# Split train and valid
-X_train, X_valid, y_train, y_valid = train_test_split(X, y, test_size=0.1)
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1)
+val_frame_path = "data2/val_data"
+val_mask_path = "labels2/val_labels"
+
+test_frame_path = "data2/test_data"
+test_mask_path = "labels2/test_labels"
+
+train_gen = data_gen(train_frame_path, train_mask_path, batch_size=BATCH_SIZE)
+val_gen = data_gen(val_frame_path, val_mask_path, batch_size=BATCH_SIZE)
+test_gen = data_gen(test_frame_path, test_mask_path, batch_size=BATCH_SIZE)
 
 input_tensor = Input((im_height, im_width, 3))
 
@@ -89,30 +100,90 @@ fcn_model.compile(optimizer=Adam(), loss="categorical_crossentropy",
 
 print(fcn_model.summary())
 
-n_folds = 5
-#skf = StratifiedKFold(y, n_folds=n_folds, shuffle=True)
+fcn_model.load_weights(os.path.join(data_path, "new-deeplab-model.h5"))
 
-#fcn_model.load_weights(os.path.join(data_path, "deeplab-weights.h5"))
+callbacks = [EarlyStopping(patience=15, verbose=True),
+             ReduceLROnPlateau(factor=0.1, patience=3, min_lr=0.000001,
+                               verbose=True)]
 
-results = fcn_model.fit(X_train, y_train, batch_size=4, epochs=30,
-                        validation_data=(X_valid, y_valid))
+num_training_samples = 30888
+num_validation_samples = 4616
+num_test_samples = 5043
+num_epochs = 1
+
+results = fcn_model.fit_generator(generator=train_gen,
+                                  steps_per_epoch=num_training_samples//BATCH_SIZE,
+                                  epochs=num_epochs, callbacks=callbacks,
+                                  validation_data=val_gen,
+                                  validation_steps=num_validation_samples//BATCH_SIZE,
+                                  verbose=1)
 
 plt.figure(figsize=(8, 8))
 plt.title("Learning curve")
 plt.plot(results.history["loss"], label="loss")
+plt.plot(results.history["val_loss"], label="val_loss")
+plt.plot(np.argmin(results.history["val_loss"]),
+         np.min(results.history["val_loss"]), marker='x', color='r',
+         label="best model")
 plt.xlabel("Epochs")
 plt.ylabel("log_loss")
 plt.legend()
 plt.show()
 
-fcn_model.save_weights(os.path.join(data_path, "deeplab-weights.h5"))
+plt.figure(figsize=(8, 8))
+plt.title("Accuracy curve")
+plt.plot(results.history["acc"], label="acc")
+plt.plot(results.history["val_acc"], label="val_acc")
+plt.plot(np.argmin(results.history["val_acc"]),
+         np.min(results.history["val_acc"]), marker='x', color='r',
+         label="best model")
+plt.xlabel("Epochs")
+plt.ylabel("acc")
+plt.legend()
+plt.show()
 
-#preds_train = fcn_model.predict(X_train, verbose=True)
-#preds_val = fcn_model.predict(X_test, verbose=True)
+fcn_model.save_weights(os.path.join(data_path, "new-deeplab-model.h5"))
 
-# Threshold predictions
-#preds_train_t = (preds_train == preds_train.max(axis=3)[..., None]).astype(int)
-#preds_val_t = (preds_val > 0.1).astype(np.uint8)
+test_loss, test_acc = fcn_model.evaluate_generator(generator=test_gen,
+                                                   steps=num_test_samples,
+                                                   verbose=1)
+print("\n")
+print("Test acc: ", test_acc)
+print("Test loss: ", test_loss)
+
+X_test = np.concatenate((
+        np.load(os.path.join(data_path, "data/final_train_data7.npy")),
+        np.load(os.path.join(data_path, "data/final_train_data15.npy")),
+        np.load(os.path.join(data_path, "data/final_train_data23.npy"))), axis=0)
+y_test = np.concatenate((
+        np.load(os.path.join(data_path, "labels/final_train_labels7.npy")),
+        np.load(os.path.join(data_path, "labels/final_train_labels15.npy")),
+        np.load(os.path.join(data_path, "labels/final_train_labels23.npy"))), axis=0)
+Y_test = np.argmax(y_test, axis=3).flatten()
+y_pred = fcn_model.predict(X_test)
+Y_pred = np.argmax(y_pred, axis=3).flatten()
+correct = np.zeros((6))
+totals1 = np.zeros((6))
+totals2 = np.zeros((6))
+
+for i in range(len(Y_test)):
+    if Y_pred[i] == Y_test[i]:
+        correct[Y_pred[i]] += 1
+    totals1[Y_pred[i]] += 1
+    totals2[Y_test[i]] += 1
+
+precision = correct / totals1
+recall = correct / totals2
+F1 = 2 * (precision*recall) / (precision + recall)
+print(F1)
+
+X = imread("data2/image_data/train_data1.png").reshape(1, 160, 160, 3)/255.
+y = tiff.imread("labels2/image_labels/train_labels1.tif").reshape(1, 160, 160, 6)
+#X = np.load("data/final_train_data0.npy") / 255.
+#y = np.load("labels/final_train_labels0.npy")
+
+preds_train = fcn_model.predict(X, verbose=True)
+preds_train_t = (preds_train == preds_train.max(axis=3)[..., None]).astype(int)
 
 
 def plot_sample(X, y, preds, binary_preds, ix=None):
@@ -120,19 +191,19 @@ def plot_sample(X, y, preds, binary_preds, ix=None):
         ix = random.randint(0, len(X))
         print("ix:", ix)
 
-    fig, ax = plt.subplots(7, 1, figsize=(10, 20))
+    fig, ax = plt.subplots(13, 1, figsize=(10, 20))
 
-    ax[0].imshow(X_train[ix], interpolation="bilinear")
+    ax[0].imshow(X[ix], interpolation="bilinear")
     ax[0].set_title("Picture")
 
-    for i in range(3, 6):
-        ax[2 * i - 5].imshow(y_train[ix, ..., i], interpolation="bilinear",
-          cmap="gray")
-        ax[2 * i - 5].set_title("True Label")
+    for i in range(6):
+        ax[2 * i + 1].imshow(y[ix, ..., i], interpolation="bilinear",
+                             cmap="gray")
+        ax[2 * i + 1].set_title("True Label")
 
-        ax[2 * i - 4].imshow(preds[ix, ..., i], interpolation="bilinear",
-          cmap="gray")
-        ax[2 * i - 4].set_title("Predicted Label")
+        ax[2 * i + 2].imshow(preds[ix, ..., i], interpolation="bilinear",
+                             cmap="gray")
+        ax[2 * i + 2].set_title("Predicted Label")
 
     plt.show()
 
@@ -202,7 +273,7 @@ def plot_sample(X, y, preds, binary_preds, ix=None):
 
 
 # Check if training data looks alright
-#plot_sample(X_train, y_train, preds_train, preds_train_t, ix_array=None)
+plot_sample(X, y, preds_train, preds_train_t, ix=0)
 
 
 def plot_array(X, y, preds, ix_array=None):
@@ -278,6 +349,7 @@ def plot_array(X, y, preds, ix_array=None):
 
 
 #plot_array(X_train, y_train, preds_train_t)
+#plot_array(X_test, y_test, preds_val_t)
 
 
 def plot_image(X, y, preds):
@@ -354,10 +426,10 @@ def plot_image(X, y, preds):
     ax[1].grid(False)
     ax[1].set_xticks([])
     ax[1].set_yticks([])
-    #plt.savefig("deeplab2image1.png", bbox_inches="tight")
+    plt.savefig("deeplab10image1.png", bbox_inches="tight")
     plt.show()
 
 
 #preds = fcn_model.predict(X[0*1681:1*1681], verbose=True)
 #preds_t = (preds == preds.max(axis=3)[..., None]).astype(int)
-#plot_image(X[:1681], y[:1681], preds_t)
+#plot_image(X[:1681], y[:1681], preds_train_t)
