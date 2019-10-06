@@ -8,6 +8,8 @@ Created on Sat May 18 13:48:48 2019
 import os
 import random
 
+import matplotlib
+matplotlib.use("Agg")
 import tensorflow as tf
 from keras.applications import ResNet50
 from keras.models import Model
@@ -19,9 +21,13 @@ import matplotlib.pyplot as plt
 from skimage.io import imread
 import tifffile as tiff
 
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
 plt.style.use("ggplot")
 
-BATCH_SIZE = 4
+BATCH_SIZE = 32
 
 nb_labels = 6
 im_height = 160
@@ -32,8 +38,8 @@ data_path = os.getcwd()
 
 def data_gen(img_folder, mask_folder, batch_size):
     c = 0
-    n = os.listdir(img_folder)
-    o = os.listdir(mask_folder)
+    n = sorted(os.listdir(img_folder))
+    o = sorted(os.listdir(mask_folder))
 
     while True:
         img = np.zeros((batch_size, 160, 160, 3)).astype("float")
@@ -100,23 +106,25 @@ fcn_model.compile(optimizer=Adam(), loss="categorical_crossentropy",
 
 print(fcn_model.summary())
 
-fcn_model.load_weights(os.path.join(data_path, "new-deeplab-model.h5"))
+fcn_model.load_weights(os.path.join(data_path, "new-deeplab-model-100.h5"))
 
 callbacks = [EarlyStopping(patience=15, verbose=True),
-             ReduceLROnPlateau(factor=0.1, patience=3, min_lr=0.000001,
+             ReduceLROnPlateau(factor=0.1, patience=5, min_lr=0.000001,
                                verbose=True)]
 
 num_training_samples = 30888
 num_validation_samples = 4616
 num_test_samples = 5043
-num_epochs = 1
+num_epochs = 50
 
 results = fcn_model.fit_generator(generator=train_gen,
                                   steps_per_epoch=num_training_samples//BATCH_SIZE,
                                   epochs=num_epochs, callbacks=callbacks,
                                   validation_data=val_gen,
                                   validation_steps=num_validation_samples//BATCH_SIZE,
-                                  verbose=1)
+                                  verbose=2)
+
+fcn_model.save_weights(os.path.join(data_path, "new-deeplab-model-200.h5"))
 
 plt.figure(figsize=(8, 8))
 plt.title("Learning curve")
@@ -128,21 +136,23 @@ plt.plot(np.argmin(results.history["val_loss"]),
 plt.xlabel("Epochs")
 plt.ylabel("log_loss")
 plt.legend()
-plt.show()
+plt.savefig("lossplot-200.png", bbox_inches="tight")
+#plt.show()
 
 plt.figure(figsize=(8, 8))
 plt.title("Accuracy curve")
 plt.plot(results.history["acc"], label="acc")
 plt.plot(results.history["val_acc"], label="val_acc")
-plt.plot(np.argmin(results.history["val_acc"]),
-         np.min(results.history["val_acc"]), marker='x', color='r',
+plt.plot(np.argmax(results.history["val_acc"]),
+         np.max(results.history["val_acc"]), marker='x', color='r',
          label="best model")
 plt.xlabel("Epochs")
 plt.ylabel("acc")
 plt.legend()
-plt.show()
+plt.savefig("accplot-200.png", bbox_inches="tight")
+#plt.show()
 
-fcn_model.save_weights(os.path.join(data_path, "new-deeplab-model.h5"))
+fcn_model.save_weights(os.path.join(data_path, "new-deeplab-model-200.h5"))
 
 test_loss, test_acc = fcn_model.evaluate_generator(generator=test_gen,
                                                    steps=num_test_samples,
@@ -150,7 +160,7 @@ test_loss, test_acc = fcn_model.evaluate_generator(generator=test_gen,
 print("\n")
 print("Test acc: ", test_acc)
 print("Test loss: ", test_loss)
-
+'''
 X_test = np.concatenate((
         np.load(os.path.join(data_path, "data/final_train_data7.npy")),
         np.load(os.path.join(data_path, "data/final_train_data15.npy")),
@@ -176,7 +186,7 @@ precision = correct / totals1
 recall = correct / totals2
 F1 = 2 * (precision*recall) / (precision + recall)
 print(F1)
-
+'''
 X = imread("data2/image_data/train_data1.png").reshape(1, 160, 160, 3)/255.
 y = tiff.imread("labels2/image_labels/train_labels1.tif").reshape(1, 160, 160, 6)
 #X = np.load("data/final_train_data0.npy") / 255.
@@ -205,7 +215,8 @@ def plot_sample(X, y, preds, binary_preds, ix=None):
                              cmap="gray")
         ax[2 * i + 2].set_title("Predicted Label")
 
-    plt.show()
+    plt.savefig("array-200.png", bbox_inches="tight")
+    #plt.show()
 
     # cars = yellow
     true_cars_overlay = (y[ix, ..., 0] > 0).reshape(im_height, im_width, 1)
@@ -237,7 +248,8 @@ def plot_sample(X, y, preds, binary_preds, ix=None):
     ax.grid(False)
     ax.set_xticks([])
     ax.set_yticks([])
-    plt.show()
+    plt.savefig("truth-200.png", bbox_inches="tight")
+    #plt.show()
 
     # cars = yellow
     true_cars_overlay = (binary_preds[ix, ..., 0] > 0).reshape(im_height, im_width, 1)
@@ -269,7 +281,8 @@ def plot_sample(X, y, preds, binary_preds, ix=None):
     ax.grid(False)
     ax.set_xticks([])
     ax.set_yticks([])
-    plt.show()
+    plt.savefig("prediction-200.png", bbox_inches="tight")
+    #plt.show()
 
 
 # Check if training data looks alright
@@ -305,7 +318,7 @@ def plot_array(X, y, preds, ix_array=None):
             # clutter = red
             true_clutter_overlay = (y[ix, ..., 5] > 0).reshape(im_height, im_width, 1)
             true_clutter_overlay_rgba = np.concatenate((true_clutter_overlay, np.zeros(true_clutter_overlay.shape), np.zeros(true_clutter_overlay.shape), true_clutter_overlay * 0.5), axis=2)
-        
+
             ax[2*i, j].imshow(X[ix], interpolation="bilinear")
             ax[2*i, j].imshow(true_cars_overlay_rgba, interpolation="bilinear")
             ax[2*i, j].imshow(true_buildings_overlay_rgba, interpolation="bilinear")
@@ -316,7 +329,7 @@ def plot_array(X, y, preds, ix_array=None):
             ax[2*i, j].grid(False)
             ax[2*i, j].set_xticks([])
             ax[2*i, j].set_yticks([])
-        
+
             # cars = yellow
             true_cars_overlay = (preds[ix, ..., 0] > 0).reshape(im_height, im_width, 1)
             true_cars_overlay_rgba = np.concatenate((true_cars_overlay, true_cars_overlay, np.zeros(true_cars_overlay.shape), true_cars_overlay * 0.5), axis=2)
@@ -335,7 +348,7 @@ def plot_array(X, y, preds, ix_array=None):
             # clutter = red
             true_clutter_overlay = (preds[ix, ..., 5] > 0).reshape(im_height, im_width, 1)
             true_clutter_overlay_rgba = np.concatenate((true_clutter_overlay, np.zeros(true_clutter_overlay.shape), np.zeros(true_clutter_overlay.shape), true_clutter_overlay * 0.5), axis=2)
-        
+
             ax[2*i+1, j].imshow(X[ix], interpolation="bilinear")
             ax[2*i+1, j].imshow(true_cars_overlay_rgba, interpolation="bilinear")
             ax[2*i+1, j].imshow(true_buildings_overlay_rgba, interpolation="bilinear")

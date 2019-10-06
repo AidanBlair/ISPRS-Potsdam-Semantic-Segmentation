@@ -9,6 +9,8 @@ import os
 import random
 
 import numpy as np
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import tensorflow as tf
 from keras.models import Model
@@ -21,15 +23,19 @@ from keras.optimizers import Adam
 from skimage.io import imread
 import tifffile as tiff
 
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+
 plt.style.use("ggplot")
 
-BATCH_SIZE = 4
+BATCH_SIZE = 32
 
 
 def data_gen(img_folder, mask_folder, batch_size):
     c = 0
-    n = os.listdir(img_folder)
-    o = os.listdir(mask_folder)
+    n = sorted(os.listdir(img_folder))
+    o = sorted(os.listdir(mask_folder))
 
     while True:
         img = np.zeros((batch_size, 160, 160, 3)).astype("float")
@@ -55,7 +61,7 @@ val_frame_path = "data2/val_data"
 val_mask_path = "labels2/val_labels"
 
 test_frame_path = "data2/test_data"
-test_mask_path = "data2/test_labels"
+test_mask_path = "labels2/test_labels"
 
 train_gen = data_gen(train_frame_path, train_mask_path, batch_size=BATCH_SIZE)
 val_gen = data_gen(val_frame_path, val_mask_path, batch_size=BATCH_SIZE)
@@ -151,21 +157,24 @@ model.compile(optimizer=Adam(),
               loss="categorical_crossentropy",
               metrics=["acc"])
 
-model.load_weights("new-segmentation-model.h5")
+model.load_weights("unet-model-100.h5")
 
 callbacks = [EarlyStopping(patience=10, verbose=True),
-             ReduceLROnPlateau(factor=0.1, patience=5, min_lr=0.00001,
+             ReduceLROnPlateau(factor=0.1, patience=5, min_lr=0.000001,
                                verbose=True)]
 
 num_training_samples = 30888
 num_validation_samples = 4616
-num_epochs = 5043
+num_test_samples = 5043
+num_epochs = 100
 results = model.fit_generator(generator=train_gen,
                               steps_per_epoch=num_training_samples//BATCH_SIZE,
                               epochs=num_epochs, callbacks=callbacks,
                               validation_data=val_gen,
                               validation_steps=num_validation_samples//BATCH_SIZE,
-                              verbose=1)
+                              verbose=2)
+
+model.save_weights("unet-model-200.h5")
 
 plt.figure(figsize=(8, 8))
 plt.title("Learning curve")
@@ -177,30 +186,32 @@ plt.plot(np.argmin(results.history["val_loss"]),
 plt.xlabel("Epochs")
 plt.ylabel("log_loss")
 plt.legend()
-plt.show()
+plt.savefig("lossplot-unet-200.png", bbox_inches="tight")
+#plt.show()
 
 plt.figure(figsize=(8, 8))
 plt.title("Accuracy curve")
 plt.plot(results.history["acc"], label="acc")
 plt.plot(results.history["val_acc"], label="val_acc")
-plt.plot(np.argmin(results.history["val_acc"]),
-         np.min(results.history["val_acc"]), marker='x', color='r',
+plt.plot(np.argmax(results.history["val_acc"]),
+         np.max(results.history["val_acc"]), marker='x', color='r',
          label="best model")
 plt.xlabel("Epochs")
 plt.ylabel("acc")
 plt.legend()
-plt.show()
+plt.savefig("accplot-unet-200.png", bbox_inches="tight")
+#plt.show()
 
 # Load best model
-model.save_weights("new-segmentation-model.h5")
+model.save_weights("unet-model-200.h5")
 
 test_loss, test_acc = model.evaluate_generator(generator=test_gen,
                                                steps=num_test_samples,
-                                               verbose=1)
+                                               verbose=2)
 print("\n")
 print("Test acc: ", test_acc)
 print("Test loss: ", test_loss)
-
+'''
 X_test = np.concatenate((
         np.load(os.path.join(data_path, "data/final_train_data7.npy")),
         np.load(os.path.join(data_path, "data/final_train_data15.npy")),
@@ -226,7 +237,7 @@ precision = correct / totals1
 recall = correct / totals2
 F1 = 2 * (precision*recall) / (precision + recall)
 print(F1)
-
+'''
 X = imread("data2/image_data/train_data1.png").reshape(1, 160, 160, 3)/255.
 y = tiff.imread("labels2/image_labels/train_labels1.tif").reshape(1, 160, 160, 6)
 
@@ -254,7 +265,8 @@ def plot_sample(X, y, preds, binary_preds, ix=None):
                              cmap="gray")
         ax[2 * i + 2].set_title("Predicted Label")
 
-    plt.show()
+    plt.savefig("image_unet{}.png".format(ix), bbox_inches="tight")
+    #plt.show()
 
     # cars = yellow
     true_cars_overlay = (y[ix, ..., 0] > 0).reshape(im_height, im_width, 1)
@@ -286,7 +298,8 @@ def plot_sample(X, y, preds, binary_preds, ix=None):
     ax.grid(False)
     ax.set_xticks([])
     ax.set_yticks([])
-    plt.show()
+    plt.savefig("true_labels_unet_200_{}".format(ix), bbox_inches="tight")
+    #plt.show()
 
     # cars = yellow
     true_cars_overlay = (binary_preds[ix, ..., 0] > 0).reshape(im_height, im_width, 1)
@@ -318,7 +331,9 @@ def plot_sample(X, y, preds, binary_preds, ix=None):
     ax.grid(False)
     ax.set_xticks([])
     ax.set_yticks([])
-    plt.show()
+    plt.savefig("predicted_labels_unet_200_{}.png".format(ix), bbox_inches="tight")
+    #plt.show()
 
 
-plot_sample(X, y, preds_train, preds_train_t, ix=0)
+for i in range(1):
+    plot_sample(X, y, preds_train, preds_train_t, ix=i)
