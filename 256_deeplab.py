@@ -15,11 +15,14 @@ from keras.applications import ResNet50
 from keras.models import Model
 from keras.layers import Input, Convolution2D, Lambda, Add, Reshape, Activation
 from keras.optimizers import Adam
-from keras.callbacks import EarlyStopping, ReduceLROnPlateau
+from keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint
 import numpy as np
 import matplotlib.pyplot as plt
 from skimage.io import imread
 import tifffile as tiff
+
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 plt.style.use("ggplot")
 
@@ -38,8 +41,8 @@ def data_gen(img_folder, mask_folder, batch_size):
     o = os.listdir(mask_folder)
 
     while True:
-        img = np.zeros((batch_size, 160, 160, 3)).astype("float")
-        mask = np.zeros((batch_size, 160, 160, 6)).astype("bool")
+        img = np.zeros((batch_size, 256, 256, 3)).astype("float")
+        mask = np.zeros((batch_size, 256, 256, 6)).astype("bool")
 
         for i in range(c, c+batch_size):
             train_img = imread(img_folder+"/"+n[i])/255.
@@ -54,8 +57,8 @@ def data_gen(img_folder, mask_folder, batch_size):
         yield img, mask
 
 
-train_frame_path = "data3/image_data"
-train_mask_path = "labels3/image_labels"
+train_frame_path = "data3/train_data2"
+train_mask_path = "labels3/train_labels2"
 
 val_frame_path = "data3/val_data"
 val_mask_path = "labels3/val_labels"
@@ -106,7 +109,9 @@ fcn_model.load_weights(os.path.join(data_path, "new-deeplab-model.h5"))
 
 callbacks = [EarlyStopping(patience=15, verbose=True),
              ReduceLROnPlateau(factor=0.1, patience=3, min_lr=0.000001,
-                               verbose=True)]
+                               verbose=True),
+             ModelCheckpoint("256_deeplab_checkpoint_50.h5",
+                             save_best_only=True, save_weights_only=True)]
 
 num_training_samples = 38880
 num_validation_samples = 5556
@@ -118,7 +123,8 @@ results = fcn_model.fit_generator(generator=train_gen,
                                   epochs=num_epochs, callbacks=callbacks,
                                   validation_data=val_gen,
                                   validation_steps=num_validation_samples//BATCH_SIZE,
-                                  verbose=1)
+                                  verbose=2)
+fcn_model.save_weights(os.path.join(data_path, "256_deeplab_50.h5"))
 
 plt.figure(figsize=(8, 8))
 plt.title("Learning curve")
@@ -146,11 +152,11 @@ plt.legend()
 plt.savefig("256_deeplab_accplot_50.png", bbox_inches="tight")
 plt.show()
 
-fcn_model.save_weights(os.path.join(data_path, "new-deeplab-model.h5"))
+fcn_model.save_weights(os.path.join(data_path, "256_deeplab_50.h5"))
 
 test_loss, test_acc = fcn_model.evaluate_generator(generator=test_gen,
                                                    steps=num_test_samples,
-                                                   verbose=1)
+                                                   verbose=2)
 print("\n")
 print("Test acc: ", test_acc)
 print("Test loss: ", test_loss)
@@ -192,3 +198,97 @@ for i in range(0*2116, 1*2116):
 preds_train = fcn_model.predict(X, verbose=True)
 preds_train_t = (preds_train == preds_train.max(axis=3)[..., None]).astype(int)
 
+def plot_labels(X, y, preds):
+    width = 45
+    height = 45
+    image_array = np.zeros((6000, 6000, 3), dtype=np.int)
+    labels_array = np.zeros((6000, 6000, 6), dtype=np.bool)
+    preds_array = np.zeros((6000, 6000, 6))
+    for i in range(width):
+        for j in range(height):
+            image_array[i*(128):(i+1)*(128)+128, j*(128):(j+1)*(128)+128, :] = X[i*46+j]
+            labels_array[i*(128):(i+1)*(128)+128, j*(128):(j+1)*(128)+128, :] = y[i*46+j]
+            preds_array[i*(128):(i+1)*(128)+128, j*(128):(j+1)*(128)+128, :] = preds[i*46+j]
+        image_array[i*128:(i*128+256), 5744:6000, :] = X[i*46+45]
+        labels_array[i*128:(i*128+256), 5744:6000, :] = y[i*46+45]
+        preds_array[i*128:(i*128+256), 5744:6000, :] = preds[i*46+45]
+    for j in range(height):
+        image_array[5744:6000, j*128:(j*128+256), :] = X[j+2070]
+        labels_array[5744:6000, j*128:(j*128+256), :] = y[j+2070]
+        preds_array[5744:6000, j*128:(j*128+256), :] = preds[j+2070]
+    image_array[5744:6000, 5744:6000, :] = X[-1]
+    labels_array[5744:6000, 5744:6000, :] = y[-1]
+    preds_array[5744:6000, 5744:6000, :] = preds[-1]
+
+    fig, ax = plt.subplots(1, 1, figsize=(20, 20))
+    ax.imshow(image_array, interpolation="bilinear")
+    ax.grid(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    plt.savefig("256_deeplab_full_image1.png", bbox_inches="tight")
+    plt.show()
+
+    # cars = yellow
+    true_cars_overlay = (labels_array[..., 0] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
+    true_cars_overlay_rgba = np.concatenate((true_cars_overlay, true_cars_overlay, np.zeros(true_cars_overlay.shape), true_cars_overlay * 0.5), axis=2)
+    # buildings = blue
+    true_buildings_overlay = (labels_array[..., 1] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
+    true_buildings_overlay_rgba = np.concatenate((np.zeros(true_buildings_overlay.shape), np.zeros(true_buildings_overlay.shape), true_buildings_overlay, true_buildings_overlay * 0.5), axis=2)
+    # low_vegetation = cyan
+    true_low_vegetation_overlay = (labels_array[..., 2] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
+    true_low_vegetation_overlay_rgba = np.concatenate((np.zeros(true_low_vegetation_overlay.shape), true_low_vegetation_overlay, true_low_vegetation_overlay, true_low_vegetation_overlay * 0.5), axis=2)
+    # trees = green
+    true_trees_overlay = (labels_array[..., 3] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
+    true_trees_overlay_rgba = np.concatenate((np.zeros(true_trees_overlay.shape), true_trees_overlay, np.zeros(true_trees_overlay.shape), true_trees_overlay * 0.5), axis=2)
+    # impervious = white
+    true_impervious_overlay = (labels_array[..., 4] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
+    true_impervious_overlay_rgba = np.concatenate((true_impervious_overlay, true_impervious_overlay, true_impervious_overlay, true_impervious_overlay * 0.5), axis=2)
+    # clutter = red
+    true_clutter_overlay = (labels_array[..., 5] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
+    true_clutter_overlay_rgba = np.concatenate((true_clutter_overlay, np.zeros(true_clutter_overlay.shape), np.zeros(true_clutter_overlay.shape), true_clutter_overlay * 0.5), axis=2)
+
+    fig, ax = plt.subplots(2, 1, figsize=(20, 20))
+    ax[0].imshow(image_array, interpolation="bilinear")
+    ax[0].imshow(true_cars_overlay_rgba, interpolation="bilinear")
+    ax[0].imshow(true_buildings_overlay_rgba, interpolation="bilinear")
+    ax[0].imshow(true_low_vegetation_overlay_rgba, interpolation="bilinear")
+    ax[0].imshow(true_trees_overlay_rgba, interpolation="bilinear")
+    ax[0].imshow(true_impervious_overlay_rgba, interpolation="bilinear")
+    ax[0].imshow(true_clutter_overlay_rgba, interpolation="bilinear")
+    ax[0].grid(False)
+    ax[0].set_xticks([])
+    ax[0].set_yticks([])
+
+    # cars = yellow
+    true_cars_overlay = (preds_array[..., 0] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
+    true_cars_overlay_rgba = np.concatenate((true_cars_overlay, true_cars_overlay, np.zeros(true_cars_overlay.shape), true_cars_overlay * 0.5), axis=2)
+    # buildings = blue
+    true_buildings_overlay = (preds_array[..., 1] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
+    true_buildings_overlay_rgba = np.concatenate((np.zeros(true_buildings_overlay.shape), np.zeros(true_buildings_overlay.shape), true_buildings_overlay, true_buildings_overlay * 0.5), axis=2)
+    # low_vegetation = cyan
+    true_low_vegetation_overlay = (preds_array[..., 2] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
+    true_low_vegetation_overlay_rgba = np.concatenate((np.zeros(true_low_vegetation_overlay.shape), true_low_vegetation_overlay, true_low_vegetation_overlay, true_low_vegetation_overlay * 0.5), axis=2)
+    # trees = green
+    true_trees_overlay = (preds_array[..., 3] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
+    true_trees_overlay_rgba = np.concatenate((np.zeros(true_trees_overlay.shape), true_trees_overlay, np.zeros(true_trees_overlay.shape), true_trees_overlay * 0.5), axis=2)
+    # impervious = white
+    true_impervious_overlay = (preds_array[..., 4] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
+    true_impervious_overlay_rgba = np.concatenate((true_impervious_overlay, true_impervious_overlay, true_impervious_overlay, true_impervious_overlay * 0.5), axis=2)
+    # clutter = red
+    true_clutter_overlay = (preds_array[..., 5] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
+    true_clutter_overlay_rgba = np.concatenate((true_clutter_overlay, np.zeros(true_clutter_overlay.shape), np.zeros(true_clutter_overlay.shape), true_clutter_overlay * 0.5), axis=2)
+
+    ax[1].imshow(image_array, interpolation="bilinear")
+    ax[1].imshow(true_cars_overlay_rgba, interpolation="bilinear")
+    ax[1].imshow(true_buildings_overlay_rgba, interpolation="bilinear")
+    ax[1].imshow(true_low_vegetation_overlay_rgba, interpolation="bilinear")
+    ax[1].imshow(true_trees_overlay_rgba, interpolation="bilinear")
+    ax[1].imshow(true_impervious_overlay_rgba, interpolation="bilinear")
+    ax[1].imshow(true_clutter_overlay_rgba, interpolation="bilinear")
+    ax[1].grid(False)
+    ax[1].set_xticks([])
+    ax[1].set_yticks([])
+    plt.savefig("256_deeplab_full_labels1.png", bbox_inches="tight")
+    plt.show()
+
+plot_labels(X, y, preds_train_t)
