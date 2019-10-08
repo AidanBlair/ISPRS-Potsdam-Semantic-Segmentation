@@ -28,13 +28,13 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 plt.style.use("ggplot")
 
-BATCH_SIZE = 32
+BATCH_SIZE = 16
 
 
 def data_gen(img_folder, mask_folder, batch_size):
     c = 0
-    n = os.listdir(img_folder)
-    o = os.listdir(mask_folder)
+    n = sorted(os.listdir(img_folder))
+    o = sorted(os.listdir(mask_folder))
 
     while True:
         img = np.zeros((batch_size, 256, 256, 3)).astype("float")
@@ -161,19 +161,25 @@ model.compile(optimizer=Adam(),
 callbacks = [EarlyStopping(patience=10, verbose=True),
              ReduceLROnPlateau(factor=0.1, patience=5, min_lr=0.00001,
                                verbose=True),
+<<<<<<< HEAD
+             ModelCheckpoint("256_unet_checkpoint_50.h5", save_best_only=True, save_weights_only=True)]
+=======
              ModelCheckpoint("256_unet_50.h5", save_best_only=True,
                              save_weights_only=True)]
+>>>>>>> 43891338e1a5e1968b3d6667af2b46d09e6cc347
 
 num_training_samples = 38880
 num_validation_samples = 5556
 num_test_samples = 6348
-num_epochs = 1
+num_epochs = 50
 results = model.fit_generator(generator=train_gen,
                               steps_per_epoch=num_training_samples//BATCH_SIZE,
                               epochs=num_epochs, callbacks=callbacks,
                               validation_data=val_gen,
                               validation_steps=num_validation_samples//BATCH_SIZE,
                               verbose=2)
+
+model.save_weights("256_unet_50.h5")
 
 plt.figure(figsize=(8, 8))
 plt.title("Learning curve")
@@ -240,8 +246,8 @@ print(F1)
 X = np.zeros((2116, 256, 256, 3), dtype=int)
 y = np.zeros((2116, 256, 256, 6), dtype=bool)
 for i in range(0*2116, 1*2116):
-    X_ = imread("data3/train_data/train_data{}.png".format(i).reshape((1, 256, 256, 3))/255.)
-    X_ = tiff.imread("labels3/train_labels/train_labels{}.tif".format(i).reshape((1, 256, 256, 3)))
+    X_ = imread("data3/train_data/train_data{}.png".format(i)).reshape((1, 256, 256, 3))/255.
+    X_ = tiff.imread("labels3/train_labels/train_labels{}.tif".format(i)).reshape((1, 256, 256, 3))
     X[i-0*2116] = X_
     y[i-0*2116] = y_
 
