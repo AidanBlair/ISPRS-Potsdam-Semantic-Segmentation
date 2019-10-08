@@ -117,6 +117,7 @@ m = Add()([r32, r16, r8])
 x = Reshape((im_height * im_width, num_classes))(m)
 x = Activation("softmax")(x)
 x = Reshape((im_height, im_width, num_classes))(x)
+x = Lambda(lambda x: x * 1.0)(x)
 
 fcn_model = Model(input=input_tensor, outputs=x)
 
@@ -126,7 +127,7 @@ fcn_model.compile(optimizer=Adam(), loss="categorical_crossentropy",
 print(fcn_model.summary())
 
 fcn_model.load_weights("new-deeplab-model-100.h5")
-'''
+
 
 def get_unet(input_img, n_filters=16, dropout=0.5, batchnorm=True):
     # contracting path
@@ -183,6 +184,7 @@ def get_unet(input_img, n_filters=16, dropout=0.5, batchnorm=True):
                       batchnorm=batchnorm)
 
     outputs = Conv2D(num_classes, (1, 1), activation="softmax")(c9)
+    outputs = Lambda(lambda x: x * 1.0)(outputs)
     model = Model(inputs=[input_img], outputs=[outputs])
     return model
 
@@ -213,7 +215,7 @@ ensemble_model = ensemble(models, input_tensor)
 ensemble_model.compile(optimizer=Adam(),
                        loss="categorical_crossentropy",
                        metrics=["acc"])
-'''
+
 num_test_samples = 5043
 '''
 test_loss_unet, test_acc_unet = model.evaluate_generator(generator=test_gen,
@@ -250,12 +252,12 @@ for i in range(0*1681, 1*1681):
     X[i-0*1681] = X_
     y[i-0*1681] = y_
 
-#preds_train = ensemble_model.predict(X, verbose=True)
+preds_train = ensemble_model.predict(X, verbose=True)
 #preds_train_1 = model.predict(X, verbose=True)
-preds_train_2 = fcn_model.predict(X, verbose=True)
-#preds_train_t = (preds_train == preds_train.max(axis=3)[..., None]).astype(int)
+#preds_train_2 = fcn_model.predict(X, verbose=True)
+preds_train_t = (preds_train == preds_train.max(axis=3)[..., None]).astype(int)
 #preds_train_1_t = (preds_train_1 == preds_train_1.max(axis=3)[..., None]).astype(int)
-preds_train_2_t = (preds_train_2 == preds_train_2.max(axis=3)[..., None]).astype(int)
+#preds_train_2_t = (preds_train_2 == preds_train_2.max(axis=3)[..., None]).astype(int)
 
 
 def get_acc(y, preds, name):
