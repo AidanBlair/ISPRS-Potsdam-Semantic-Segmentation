@@ -30,7 +30,7 @@ os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 # Batch size should be as big as can be handled by computer, up to 32
-BATCH_SIZE = 8
+BATCH_SIZE = 4
 NUM_CLASSES = 6
 IM_HEIGHT = 160
 IM_WIDTH = 160
@@ -160,7 +160,7 @@ model.compile(optimizer=Adam(lr=0.001),
               loss="categorical_crossentropy",
               metrics=["acc"])
 
-#model.load_weights("unet-model-checkpoint.h5")
+model.load_weights("unet-model-final.h5")
 
 callbacks = [EarlyStopping(patience=10, verbose=True),
              ReduceLROnPlateau(factor=0.1, patience=5, min_lr=0.0000001,
@@ -215,15 +215,17 @@ print("\n")
 print("Test acc: ", test_acc)
 print("Test loss: ", test_loss)
 
+
 # Find the F1 scores of each class
-X_test = np.concatenate((
-        np.load("data/final_train_data7.npy"),
-        np.load("data/final_train_data15.npy"),
-        np.load("data/final_train_data23.npy")), axis=0)
-y_test = np.concatenate((
-        np.load("labels/final_train_labels7.npy"),
-        np.load("labels/final_train_labels15.npy"),
-        np.load("labels/final_train_labels23.npy")), axis=0)
+X_ = 0
+y_ = 0
+X_test = np.zeros((5043, 160, 160, 3))
+y_test = np.zeros((5043, 160, 160, 6), dtype=np.bool)
+for i in range(5043):
+    X_ = imread("data2/test_data/test_data"+str(i)+".png").reshape((1, 160, 160, 3))/255.
+    y_ = tiff.imread("labels2/test_labels/test_labels"+str(i)+".tif").reshape((1, 160, 160, 6))
+    X_test[i] = X_
+    y_test[i] = y_
 Y_test = np.argmax(y_test, axis=3).flatten()
 y_pred = model.predict(X_test)
 Y_pred = np.argmax(y_pred, axis=3).flatten()
@@ -243,104 +245,16 @@ F1 = 2 * (precision*recall) / (precision + recall)
 print(F1)
 
 # Load image and labels to create mask
-X = imread("data2/image_data/train_data0.png").reshape(1, 160, 160, 3)/255.
-y = tiff.imread("labels2/image_labels/train_labels0.tif").reshape(1, 160, 160, 6)
+X = np.zeros((1681, 160, 160, 3))
+y = np.zeros((1681, 160, 160, 6), dtype=np.bool)
+for i in range(0*1681, 1*1681):
+    X_ = imread("data2/test_data/test_data"+str(i)+".png").reshape((1, 160, 160, 3))/255.
+    y_ = tiff.imread("labels2/test_labels/test_labels"+str(i)+".tif").reshape((1, 160, 160, 6))
+    X[i-0*1681] = X_
+    y[i-0*1681] = y_
 
 preds_train = model.predict(X, verbose=True)
 preds_train_t = (preds_train == preds_train.max(axis=3)[..., None]).astype(int)
-
-
-def plot_sample(X, y, preds, binary_preds, ix=None):
-    if ix is None:
-        ix = random.randint(0, len(X))
-        print("ix:", ix)
-
-    fig, ax = plt.subplots(13, 1, figsize=(10, 20))
-
-    ax[0].imshow(X[ix], interpolation="bilinear")
-    ax[0].set_title("Picture")
-
-    for i in range(6):
-        ax[2 * i + 1].imshow(y[ix, ..., i], interpolation="bilinear",
-                             cmap="gray")
-        ax[2 * i + 1].set_title("True Label")
-
-        ax[2 * i + 2].imshow(preds[ix, ..., i], interpolation="bilinear",
-                             cmap="gray")
-        ax[2 * i + 2].set_title("Predicted Label")
-
-    plt.savefig("image_unet{}.png".format(ix), bbox_inches="tight")
-    #plt.show()
-
-    # cars = yellow
-    true_cars_overlay = (y[ix, ..., 0] > 0).reshape(IM_HEIGHT, IM_WIDTH, 1)
-    true_cars_overlay_rgba = np.concatenate((true_cars_overlay, true_cars_overlay, np.zeros(true_cars_overlay.shape), true_cars_overlay * 0.5), axis=2)
-    # buildings = blue
-    true_buildings_overlay = (y[ix, ..., 1] > 0).reshape(IM_HEIGHT, IM_WIDTH, 1)
-    true_buildings_overlay_rgba = np.concatenate((np.zeros(true_buildings_overlay.shape), np.zeros(true_buildings_overlay.shape), true_buildings_overlay, true_buildings_overlay * 0.5), axis=2)
-    # low_vegetation = cyan
-    true_low_vegetation_overlay = (y[ix, ..., 2] > 0).reshape(IM_HEIGHT, IM_WIDTH, 1)
-    true_low_vegetation_overlay_rgba = np.concatenate((np.zeros(true_low_vegetation_overlay.shape), true_low_vegetation_overlay, true_low_vegetation_overlay, true_low_vegetation_overlay * 0.5), axis=2)
-    # trees = green
-    true_trees_overlay = (y[ix, ..., 3] > 0).reshape(IM_HEIGHT, IM_WIDTH, 1)
-    true_trees_overlay_rgba = np.concatenate((np.zeros(true_trees_overlay.shape), true_trees_overlay, np.zeros(true_trees_overlay.shape), true_trees_overlay * 0.5), axis=2)
-    # impervious = white
-    true_impervious_overlay = (y[ix, ..., 4] > 0).reshape(IM_HEIGHT, IM_WIDTH, 1)
-    true_impervious_overlay_rgba = np.concatenate((true_impervious_overlay, true_impervious_overlay, true_impervious_overlay, true_impervious_overlay * 0.5), axis=2)
-    # clutter = red
-    true_clutter_overlay = (y[ix, ..., 5] > 0).reshape(IM_HEIGHT, IM_WIDTH, 1)
-    true_clutter_overlay_rgba = np.concatenate((true_clutter_overlay, np.zeros(true_clutter_overlay.shape), np.zeros(true_clutter_overlay.shape), true_clutter_overlay * 0.5), axis=2)
-
-    fig, ax = plt.subplots(figsize=(10, 10))
-    ax.imshow(X[ix], interpolation="bilinear")
-    ax.imshow(true_cars_overlay_rgba, interpolation="bilinear")
-    ax.imshow(true_buildings_overlay_rgba, interpolation="bilinear")
-    ax.imshow(true_low_vegetation_overlay_rgba, interpolation="bilinear")
-    ax.imshow(true_trees_overlay_rgba, interpolation="bilinear")
-    ax.imshow(true_impervious_overlay_rgba, interpolation="bilinear")
-    ax.imshow(true_clutter_overlay_rgba, interpolation="bilinear")
-    ax.grid(False)
-    ax.set_xticks([])
-    ax.set_yticks([])
-    plt.savefig("true_labels_unet_200_{}".format(ix), bbox_inches="tight")
-    plt.show()
-
-    # cars = yellow
-    true_cars_overlay = (binary_preds[ix, ..., 0] > 0).reshape(IM_HEIGHT, IM_WIDTH, 1)
-    true_cars_overlay_rgba = np.concatenate((true_cars_overlay, true_cars_overlay, np.zeros(true_cars_overlay.shape), true_cars_overlay * 0.5), axis=2)
-    # buildings = blue
-    true_buildings_overlay = (binary_preds[ix, ..., 1] > 0).reshape(IM_HEIGHT, IM_WIDTH, 1)
-    true_buildings_overlay_rgba = np.concatenate((np.zeros(true_buildings_overlay.shape), np.zeros(true_buildings_overlay.shape), true_buildings_overlay, true_buildings_overlay * 0.5), axis=2)
-    # low_vegetation = cyan
-    true_low_vegetation_overlay = (binary_preds[ix, ..., 2] > 0).reshape(IM_HEIGHT, IM_WIDTH, 1)
-    true_low_vegetation_overlay_rgba = np.concatenate((np.zeros(true_low_vegetation_overlay.shape), true_low_vegetation_overlay, true_low_vegetation_overlay, true_low_vegetation_overlay * 0.5), axis=2)
-    # trees = green
-    true_trees_overlay = (binary_preds[ix, ..., 3] > 0).reshape(IM_HEIGHT, IM_WIDTH, 1)
-    true_trees_overlay_rgba = np.concatenate((np.zeros(true_trees_overlay.shape), true_trees_overlay, np.zeros(true_trees_overlay.shape), true_trees_overlay * 0.5), axis=2)
-    # impervious = white
-    true_impervious_overlay = (binary_preds[ix, ..., 4] > 0).reshape(IM_HEIGHT, IM_WIDTH, 1)
-    true_impervious_overlay_rgba = np.concatenate((true_impervious_overlay, true_impervious_overlay, true_impervious_overlay, true_impervious_overlay * 0.5), axis=2)
-    # clutter = red
-    true_clutter_overlay = (binary_preds[ix, ..., 5] > 0).reshape(IM_HEIGHT, IM_WIDTH, 1)
-    true_clutter_overlay_rgba = np.concatenate((true_clutter_overlay, np.zeros(true_clutter_overlay.shape), np.zeros(true_clutter_overlay.shape), true_clutter_overlay * 0.5), axis=2)
-
-    fig, ax = plt.subplots(figsize=(10, 10))
-    ax.imshow(X[ix], interpolation="bilinear")
-    ax.imshow(true_cars_overlay_rgba, interpolation="bilinear")
-    ax.imshow(true_buildings_overlay_rgba, interpolation="bilinear")
-    ax.imshow(true_low_vegetation_overlay_rgba, interpolation="bilinear")
-    ax.imshow(true_trees_overlay_rgba, interpolation="bilinear")
-    ax.imshow(true_impervious_overlay_rgba, interpolation="bilinear")
-    ax.imshow(true_clutter_overlay_rgba, interpolation="bilinear")
-    ax.grid(False)
-    ax.set_xticks([])
-    ax.set_yticks([])
-    plt.savefig("predicted_labels_unet_200_{}.png".format(ix), bbox_inches="tight")
-    plt.show()
-
-
-for i in range(1):
-    plot_sample(X, y, preds_train, preds_train_t, ix=i)
 
 
 def plot_image(X, y, preds):
@@ -356,6 +270,14 @@ def plot_image(X, y, preds):
             preds_array[i*(160-14):i*(160-14)+14, j*(160-14):(j+1)*(160-14)+14, :] += preds[i*41+j, :14, :, :]
             preds_array[i*(160-14):(i+1)*(160-14)+14, j*(160-14):j*(160-14)+14, :] += preds[i*41+j, :, :14, :]
             preds_array[i*(160-14)+14:(i+1)*(160-14)+14, j*(160-14)+14:(j+1)*(160-14)+14, :] += preds[i*41+j, 14:, 14:, :]
+
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.imshow(image_array, interpolation="bilinear")
+    ax.grid(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    plt.savefig("unetfinalimage0.png", bbox_inches="tight")
+    plt.show()
 
     # cars = yellow
     true_cars_overlay = (labels_array[..., 0] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
@@ -417,7 +339,7 @@ def plot_image(X, y, preds):
     ax[1].grid(False)
     ax[1].set_xticks([])
     ax[1].set_yticks([])
-    plt.savefig("deeplab200image0.png", bbox_inches="tight")
+    plt.savefig("unetfinallabels0.png", bbox_inches="tight")
     plt.show()
 
 

@@ -7,9 +7,7 @@ Created on Sat May 18 13:48:48 2019
 
 import os
 import random
-
 import matplotlib
-matplotlib.use("Agg")
 import tensorflow as tf
 from keras.applications import ResNet50
 from keras.models import Model
@@ -21,30 +19,35 @@ import matplotlib.pyplot as plt
 from skimage.io import imread
 import tifffile as tiff
 
+# Used for GPU server to select specific GPU
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-
+# Use this to allow GPU server to create graphs
+matplotlib.use("Agg")
 plt.style.use("ggplot")
 
-BATCH_SIZE = 32
-
-nb_labels = 6
-im_height = 160
-im_width = 160
+# Batch size should be as big as can be handled by computer, up to 32
+BATCH_SIZE = 4
+NUM_CLASSES = 6
+IM_HEIGHT = 160
+IM_WIDTH = 160
 
 data_path = os.getcwd()
 
 
 def data_gen(img_folder, mask_folder, batch_size):
     c = 0
+    # IMPORTANT for linux OS to sort folders
     n = sorted(os.listdir(img_folder))
     o = sorted(os.listdir(mask_folder))
 
     while True:
+        # Initialise the image and mask arrays
         img = np.zeros((batch_size, 160, 160, 3)).astype("float")
         mask = np.zeros((batch_size, 160, 160, 6)).astype("bool")
 
+        # Create a generator that makes batches of batch_size
         for i in range(c, c+batch_size):
             train_img = imread(img_folder+"/"+n[i])/255.
             img[i-c] = train_img
@@ -67,11 +70,12 @@ val_mask_path = "labels2/val_labels"
 test_frame_path = "data2/test_data"
 test_mask_path = "labels2/test_labels"
 
+# Create data generators for the train, validation, and test sets
 train_gen = data_gen(train_frame_path, train_mask_path, batch_size=BATCH_SIZE)
 val_gen = data_gen(val_frame_path, val_mask_path, batch_size=BATCH_SIZE)
 test_gen = data_gen(test_frame_path, test_mask_path, batch_size=BATCH_SIZE)
 
-input_tensor = Input((im_height, im_width, 3))
+input_tensor = Input((IM_HEIGHT, IM_WIDTH, 3))
 
 base_model = ResNet50(include_top=False, weights="imagenet",
                       input_tensor=input_tensor)
@@ -80,13 +84,13 @@ x32 = base_model.get_layer("add_16").output
 x16 = base_model.get_layer("add_13").output
 x8 = base_model.get_layer("add_7").output
 
-c32 = Convolution2D(nb_labels, (1, 1))(x32)
-c16 = Convolution2D(nb_labels, (1, 1))(x16)
-c8 = Convolution2D(nb_labels, (1, 1))(x8)
+c32 = Convolution2D(NUM_CLASSES, (1, 1))(x32)
+c16 = Convolution2D(NUM_CLASSES, (1, 1))(x16)
+c8 = Convolution2D(NUM_CLASSES, (1, 1))(x8)
 
 
 def resize_bilinear(images):
-    return tf.image.resize_bilinear(images, [im_height, im_width])
+    return tf.image.resize_bilinear(images, [IM_HEIGHT, IM_WIDTH])
 
 
 r32 = Lambda(resize_bilinear)(c32)
@@ -95,9 +99,9 @@ r8 = Lambda(resize_bilinear)(c8)
 
 m = Add()([r32, r16, r8])
 
-x = Reshape((im_height * im_width, nb_labels))(m)
+x = Reshape((IM_HEIGHT * IM_WIDTH, NUM_CLASSES))(m)
 x = Activation("softmax")(x)
-x = Reshape((im_height, im_width, nb_labels))(x)
+x = Reshape((IM_HEIGHT, IM_WIDTH, NUM_CLASSES))(x)
 
 fcn_model = Model(input=input_tensor, output=x)
 
@@ -106,7 +110,7 @@ fcn_model.compile(optimizer=Adam(), loss="categorical_crossentropy",
 
 print(fcn_model.summary())
 
-fcn_model.load_weights(os.path.join(data_path, "new-deeplab-model-100.h5"))
+fcn_model.load_weights(os.path.join(data_path, "deeplab-model-final.h5"))
 
 callbacks = [EarlyStopping(patience=15, verbose=True),
              ReduceLROnPlateau(factor=0.1, patience=5, min_lr=0.000001,
@@ -115,15 +119,16 @@ callbacks = [EarlyStopping(patience=15, verbose=True),
 num_training_samples = 30888
 num_validation_samples = 4616
 num_test_samples = 5043
-num_epochs = 50
+num_epochs = 100
 
 results = fcn_model.fit_generator(generator=train_gen,
                                   steps_per_epoch=num_training_samples//BATCH_SIZE,
                                   epochs=num_epochs, callbacks=callbacks,
                                   validation_data=val_gen,
                                   validation_steps=num_validation_samples//BATCH_SIZE,
-                                  verbose=2)
+                                  verbose=1)
 
+# Save last model
 fcn_model.save_weights(os.path.join(data_path, "new-deeplab-model-200.h5"))
 
 plt.figure(figsize=(8, 8))
@@ -136,8 +141,8 @@ plt.plot(np.argmin(results.history["val_loss"]),
 plt.xlabel("Epochs")
 plt.ylabel("log_loss")
 plt.legend()
-plt.savefig("lossplot-200.png", bbox_inches="tight")
-#plt.show()
+plt.savefig("lossplot-{}.png".format(num_epochs), bbox_inches="tight")
+plt.show()
 
 plt.figure(figsize=(8, 8))
 plt.title("Accuracy curve")
@@ -149,10 +154,8 @@ plt.plot(np.argmax(results.history["val_acc"]),
 plt.xlabel("Epochs")
 plt.ylabel("acc")
 plt.legend()
-plt.savefig("accplot-200.png", bbox_inches="tight")
-#plt.show()
-
-fcn_model.save_weights(os.path.join(data_path, "new-deeplab-model-200.h5"))
+plt.savefig("accplot-{}.png".format(num_epochs), bbox_inches="tight")
+plt.show()
 
 test_loss, test_acc = fcn_model.evaluate_generator(generator=test_gen,
                                                    steps=num_test_samples,
@@ -160,15 +163,16 @@ test_loss, test_acc = fcn_model.evaluate_generator(generator=test_gen,
 print("\n")
 print("Test acc: ", test_acc)
 print("Test loss: ", test_loss)
-'''
-X_test = np.concatenate((
-        np.load(os.path.join(data_path, "data/final_train_data7.npy")),
-        np.load(os.path.join(data_path, "data/final_train_data15.npy")),
-        np.load(os.path.join(data_path, "data/final_train_data23.npy"))), axis=0)
-y_test = np.concatenate((
-        np.load(os.path.join(data_path, "labels/final_train_labels7.npy")),
-        np.load(os.path.join(data_path, "labels/final_train_labels15.npy")),
-        np.load(os.path.join(data_path, "labels/final_train_labels23.npy"))), axis=0)
+
+X_ = 0
+y_ = 0
+X_test = np.zeros((5043, 160, 160, 3))
+y_test = np.zeros((5043, 160, 160, 6), dtype=np.bool)
+for i in range(5043):
+    X_ = imread("data2/test_data/test_data"+str(i)+".png").reshape((1, 160, 160, 3))/255.
+    y_ = tiff.imread("labels2/test_labels/test_labels"+str(i)+".tif").reshape((1, 160, 160, 6))
+    X_test[i] = X_
+    y_test[i] = y_
 Y_test = np.argmax(y_test, axis=3).flatten()
 y_pred = fcn_model.predict(X_test)
 Y_pred = np.argmax(y_pred, axis=3).flatten()
@@ -186,11 +190,14 @@ precision = correct / totals1
 recall = correct / totals2
 F1 = 2 * (precision*recall) / (precision + recall)
 print(F1)
-'''
-X = imread("data2/image_data/train_data1.png").reshape(1, 160, 160, 3)/255.
-y = tiff.imread("labels2/image_labels/train_labels1.tif").reshape(1, 160, 160, 6)
-#X = np.load("data/final_train_data0.npy") / 255.
-#y = np.load("labels/final_train_labels0.npy")
+
+X = np.zeros((1681, 160, 160, 3))
+y = np.zeros((1681, 160, 160, 6))
+for i in range(0*1681, 1*1681):
+    X_ = imread("data2/test_data/test_data"+str(i)+".png").reshape((1, 160, 160, 3))/255.
+    y_ = tiff.imread("labels2/test_labels/test_labels"+str(i)+".tif").reshape((1, 160, 160, 6))
+    X[i-0*1681] = X_
+    y[i-0*1681] = y_
 
 preds_train = fcn_model.predict(X, verbose=True)
 preds_train_t = (preds_train == preds_train.max(axis=3)[..., None]).astype(int)
@@ -248,7 +255,7 @@ def plot_sample(X, y, preds, binary_preds, ix=None):
     ax.grid(False)
     ax.set_xticks([])
     ax.set_yticks([])
-    plt.savefig("truth-200.png", bbox_inches="tight")
+    plt.savefig("truth-deeplab-200.png", bbox_inches="tight")
     #plt.show()
 
     # cars = yellow
@@ -281,12 +288,12 @@ def plot_sample(X, y, preds, binary_preds, ix=None):
     ax.grid(False)
     ax.set_xticks([])
     ax.set_yticks([])
-    plt.savefig("prediction-200.png", bbox_inches="tight")
+    plt.savefig("prediction-deeplab-200.png", bbox_inches="tight")
     #plt.show()
 
 
 # Check if training data looks alright
-plot_sample(X, y, preds_train, preds_train_t, ix=0)
+#plot_sample(X, y, preds_train, preds_train_t, ix=0)
 
 
 def plot_array(X, y, preds, ix_array=None):
@@ -381,22 +388,22 @@ def plot_image(X, y, preds):
 
     # cars = yellow
     true_cars_overlay = (labels_array[..., 0] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
-    true_cars_overlay_rgba = np.concatenate((true_cars_overlay, true_cars_overlay, np.zeros(true_cars_overlay.shape), true_cars_overlay * 0.5), axis=2)
+    true_cars_overlay_rgba = np.concatenate((true_cars_overlay, true_cars_overlay, np.zeros(true_cars_overlay.shape), true_cars_overlay * 1.0), axis=2)
     # buildings = blue
     true_buildings_overlay = (labels_array[..., 1] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
-    true_buildings_overlay_rgba = np.concatenate((np.zeros(true_buildings_overlay.shape), np.zeros(true_buildings_overlay.shape), true_buildings_overlay, true_buildings_overlay * 0.5), axis=2)
+    true_buildings_overlay_rgba = np.concatenate((np.zeros(true_buildings_overlay.shape), np.zeros(true_buildings_overlay.shape), true_buildings_overlay, true_buildings_overlay * 01.), axis=2)
     # low_vegetation = cyan
     true_low_vegetation_overlay = (labels_array[..., 2] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
-    true_low_vegetation_overlay_rgba = np.concatenate((np.zeros(true_low_vegetation_overlay.shape), true_low_vegetation_overlay, true_low_vegetation_overlay, true_low_vegetation_overlay * 0.5), axis=2)
+    true_low_vegetation_overlay_rgba = np.concatenate((np.zeros(true_low_vegetation_overlay.shape), true_low_vegetation_overlay, true_low_vegetation_overlay, true_low_vegetation_overlay * 1.0), axis=2)
     # trees = green
     true_trees_overlay = (labels_array[..., 3] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
-    true_trees_overlay_rgba = np.concatenate((np.zeros(true_trees_overlay.shape), true_trees_overlay, np.zeros(true_trees_overlay.shape), true_trees_overlay * 0.5), axis=2)
+    true_trees_overlay_rgba = np.concatenate((np.zeros(true_trees_overlay.shape), true_trees_overlay, np.zeros(true_trees_overlay.shape), true_trees_overlay * 1.0), axis=2)
     # impervious = white
     true_impervious_overlay = (labels_array[..., 4] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
-    true_impervious_overlay_rgba = np.concatenate((true_impervious_overlay, true_impervious_overlay, true_impervious_overlay, true_impervious_overlay * 0.5), axis=2)
+    true_impervious_overlay_rgba = np.concatenate((true_impervious_overlay, true_impervious_overlay, true_impervious_overlay, true_impervious_overlay * 1.0), axis=2)
     # clutter = red
     true_clutter_overlay = (labels_array[..., 5] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
-    true_clutter_overlay_rgba = np.concatenate((true_clutter_overlay, np.zeros(true_clutter_overlay.shape), np.zeros(true_clutter_overlay.shape), true_clutter_overlay * 0.5), axis=2)
+    true_clutter_overlay_rgba = np.concatenate((true_clutter_overlay, np.zeros(true_clutter_overlay.shape), np.zeros(true_clutter_overlay.shape), true_clutter_overlay * 1.0), axis=2)
 
     fig, ax = plt.subplots(2, 1, figsize=(20, 20))
     ax[0].imshow(image_array, interpolation="bilinear")
@@ -412,22 +419,22 @@ def plot_image(X, y, preds):
 
     # cars = yellow
     true_cars_overlay = (preds_array[..., 0] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
-    true_cars_overlay_rgba = np.concatenate((true_cars_overlay, true_cars_overlay, np.zeros(true_cars_overlay.shape), true_cars_overlay * 0.5), axis=2)
+    true_cars_overlay_rgba = np.concatenate((true_cars_overlay, true_cars_overlay, np.zeros(true_cars_overlay.shape), true_cars_overlay * 1.0), axis=2)
     # buildings = blue
     true_buildings_overlay = (preds_array[..., 1] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
-    true_buildings_overlay_rgba = np.concatenate((np.zeros(true_buildings_overlay.shape), np.zeros(true_buildings_overlay.shape), true_buildings_overlay, true_buildings_overlay * 0.5), axis=2)
+    true_buildings_overlay_rgba = np.concatenate((np.zeros(true_buildings_overlay.shape), np.zeros(true_buildings_overlay.shape), true_buildings_overlay, true_buildings_overlay * 1.0), axis=2)
     # low_vegetation = cyan
     true_low_vegetation_overlay = (preds_array[..., 2] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
-    true_low_vegetation_overlay_rgba = np.concatenate((np.zeros(true_low_vegetation_overlay.shape), true_low_vegetation_overlay, true_low_vegetation_overlay, true_low_vegetation_overlay * 0.5), axis=2)
+    true_low_vegetation_overlay_rgba = np.concatenate((np.zeros(true_low_vegetation_overlay.shape), true_low_vegetation_overlay, true_low_vegetation_overlay, true_low_vegetation_overlay * 1.0), axis=2)
     # trees = green
     true_trees_overlay = (preds_array[..., 3] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
-    true_trees_overlay_rgba = np.concatenate((np.zeros(true_trees_overlay.shape), true_trees_overlay, np.zeros(true_trees_overlay.shape), true_trees_overlay * 0.5), axis=2)
+    true_trees_overlay_rgba = np.concatenate((np.zeros(true_trees_overlay.shape), true_trees_overlay, np.zeros(true_trees_overlay.shape), true_trees_overlay * 1.0), axis=2)
     # impervious = white
     true_impervious_overlay = (preds_array[..., 4] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
-    true_impervious_overlay_rgba = np.concatenate((true_impervious_overlay, true_impervious_overlay, true_impervious_overlay, true_impervious_overlay * 0.5), axis=2)
+    true_impervious_overlay_rgba = np.concatenate((true_impervious_overlay, true_impervious_overlay, true_impervious_overlay, true_impervious_overlay * 1.0), axis=2)
     # clutter = red
     true_clutter_overlay = (preds_array[..., 5] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
-    true_clutter_overlay_rgba = np.concatenate((true_clutter_overlay, np.zeros(true_clutter_overlay.shape), np.zeros(true_clutter_overlay.shape), true_clutter_overlay * 0.5), axis=2)
+    true_clutter_overlay_rgba = np.concatenate((true_clutter_overlay, np.zeros(true_clutter_overlay.shape), np.zeros(true_clutter_overlay.shape), true_clutter_overlay * 1.0), axis=2)
 
     ax[1].imshow(image_array, interpolation="bilinear")
     ax[1].imshow(true_cars_overlay_rgba, interpolation="bilinear")
@@ -439,10 +446,8 @@ def plot_image(X, y, preds):
     ax[1].grid(False)
     ax[1].set_xticks([])
     ax[1].set_yticks([])
-    plt.savefig("deeplab10image1.png", bbox_inches="tight")
+    plt.savefig("deeplab200image0.png", bbox_inches="tight")
     plt.show()
 
 
-#preds = fcn_model.predict(X[0*1681:1*1681], verbose=True)
-#preds_t = (preds == preds.max(axis=3)[..., None]).astype(int)
-#plot_image(X[:1681], y[:1681], preds_train_t)
+plot_image(X, y, preds_train_t)

@@ -31,6 +31,9 @@ plt.style.use("ggplot")
 
 BATCH_SIZE = 4
 
+deeplab_weight = 1
+unet_weight = 1
+
 
 def data_gen(img_folder, mask_folder, batch_size):
     c = 0
@@ -117,7 +120,7 @@ m = Add()([r32, r16, r8])
 x = Reshape((im_height * im_width, num_classes))(m)
 x = Activation("softmax")(x)
 x = Reshape((im_height, im_width, num_classes))(x)
-x = Lambda(lambda x: x * 1.0)(x)
+x = Lambda(lambda x: x * deeplab_weight)(x)
 
 fcn_model = Model(input=input_tensor, outputs=x)
 
@@ -184,7 +187,7 @@ def get_unet(input_img, n_filters=16, dropout=0.5, batchnorm=True):
                       batchnorm=batchnorm)
 
     outputs = Conv2D(num_classes, (1, 1), activation="softmax")(c9)
-    outputs = Lambda(lambda x: x * 1.0)(outputs)
+    outputs = Lambda(lambda x: x * unet_weight)(outputs)
     model = Model(inputs=[input_img], outputs=[outputs])
     return model
 
@@ -198,7 +201,7 @@ model.compile(optimizer=Adam(),
               loss="categorical_crossentropy",
               metrics=["acc"])
 
-model.load_weights("unet-model-100.h5")
+model.load_weights("unet-model-200.h5")
 
 models = [fcn_model, model]
 
@@ -217,33 +220,51 @@ ensemble_model.compile(optimizer=Adam(),
                        metrics=["acc"])
 
 num_test_samples = 5043
-'''
-test_loss_unet, test_acc_unet = model.evaluate_generator(generator=test_gen,
-                                                         steps=num_test_samples//BATCH_SIZE,
-                                                         verbose=1)
 
-print("\n")
-print("U-net Test acc: ", test_acc_unet)
-print("U-net Test loss: ", test_loss_unet)
+X_ = 0
+y_ = 0
+X_test = np.zeros((5043, 160, 160, 3))
+y_test = np.zeros((5043, 160, 160, 6), dtype=np.bool)
+for i in range(5043):
+    X_ = imread("data2/test_data/test_data"+str(i)+".png").reshape((1, 160, 160, 3))/255.
+    y_ = tiff.imread("labels2/test_labels/test_labels"+str(i)+".tif").reshape((1, 160, 160, 6))
+    X_test[i] = X_
+    y_test[i] = y_
+Y_test = np.argmax(y_test, axis=3).flatten()
+y_pred = ensemble_model.predict(X_test)
+Y_pred = np.argmax(y_pred, axis=3).flatten()
+correct = np.zeros((6))
+totals1 = np.zeros((6))
+totals2 = np.zeros((6))
 
-test_loss_deeplab, test_acc_deeplab = fcn_model.evaluate_generator(generator=test_gen_1,
-                                                                   steps=num_test_samples,
-                                                                   verbose=1)
+for i in range(len(Y_test)):
+    if Y_pred[i] == Y_test[i]:
+        correct[Y_pred[i]] += 1
+    totals1[Y_pred[i]] += 1
+    totals2[Y_test[i]] += 1
 
-print("\n")
-print("Deeplab Test acc: ", test_acc_deeplab)
-print("Deeplab Test loss: ", test_loss_deeplab)
+precision = correct / totals1
+recall = correct / totals2
+F1 = 2 * (precision*recall) / (precision + recall)
+print(F1)
 
-test_loss, test_acc = ensemble_model.evaluate_generator(generator=test_gen_2,
-                                                        steps=num_test_samples,
-                                                        verbose=1)
+X = np.zeros((1681, 160, 160, 3))
+y = np.zeros((1681, 160, 160, 6))
+for i in range(8*1681, 15*1681, 8):
+    X_ = imread("data2/val_data/val_data"+str(i)+".png").reshape((1, 160, 160, 3))/255.
+    y_ = tiff.imread("labels2/val_labels/val_labels"+str(i)+".tif").reshape((1, 160, 160, 6))
+    X[int((i-8*1681)/8)] = X_
+    y[int((i-8*1681)/8)] = y_
+for i in range(16*1681, 23*1681, 8):
+    if (i-9*1681+1)/8 < 1681:
+        X_ = imread("data2/val_data/val_data"+str(i)+".png").reshape((1, 160, 160, 3))/255.
+        y_ = tiff.imread("labels2/val_labels/val_labels"+str(i)+".tif").reshape((1, 160, 160, 6))
+        X[int((i-9*1681+1)/8)] = X_
+        y[int((i-9*1681+1)/8)] = y_
 
-print("\n")
-print("Ensemble Test acc: ", test_acc)
-print("Ensemble Test loss: ", test_loss)
-'''
-#X = imread("data2/image_data/train_data1.png").reshape(1, 160, 160, 3)/255.
-#y = tiff.imread("labels2/image_labels/train_labels1.tif").reshape(1, 160, 160, 6)
+preds_val = ensemble_model.predict(X, verbose=True)
+preds_val_t = (preds_val == preds_val.max(axis=3)[..., None]).astype(int)
+
 X = np.zeros((1681, 160, 160, 3))
 y = np.zeros((1681, 160, 160, 6))
 for i in range(0*1681, 1*1681):
@@ -252,12 +273,19 @@ for i in range(0*1681, 1*1681):
     X[i-0*1681] = X_
     y[i-0*1681] = y_
 
+preds_test = ensemble_model.predict(X, verbose=True)
+preds_test_t = (preds_test == preds_test.max(axis=3)[..., None]).astype(int)
+
+X = np.zeros((1681, 160, 160, 3))
+y = np.zeros((1681, 160, 160, 6))
+for i in range(0*1681+1, 8*1681+1):
+    X_ = imread("data2/image_data/train_data"+str(i)+".png").reshape((1, 160, 160, 3))/255.
+    y_ = tiff.imread("labels2/image_labels/train_labels"+str(i)+".tif").reshape((1, 160, 160, 6))
+    X[(i-1)/8] = X_
+    y[(i-1)/8] = y_
+
 preds_train = ensemble_model.predict(X, verbose=True)
-#preds_train_1 = model.predict(X, verbose=True)
-#preds_train_2 = fcn_model.predict(X, verbose=True)
 preds_train_t = (preds_train == preds_train.max(axis=3)[..., None]).astype(int)
-#preds_train_1_t = (preds_train_1 == preds_train_1.max(axis=3)[..., None]).astype(int)
-#preds_train_2_t = (preds_train_2 == preds_train_2.max(axis=3)[..., None]).astype(int)
 
 
 def get_acc(y, preds, name):
@@ -282,7 +310,7 @@ def plot_sample(X, y, preds, binary_preds, ix=None):
     if ix is None:
         ix = random.randint(0, len(X))
         print("ix:", ix)
-    '''
+    
     fig, ax = plt.subplots(13, 1, figsize=(10, 20))
 
     ax[0].imshow(X[ix], interpolation="bilinear")
@@ -299,7 +327,7 @@ def plot_sample(X, y, preds, binary_preds, ix=None):
 
     plt.savefig("ensemble_image1.png", bbox_inches="tight")
     #plt.show()
-    '''
+    
     # cars = yellow
     true_cars_overlay = (y[ix, ..., 0] > 0).reshape(im_height, im_width, 1)
     true_cars_overlay_rgba = np.concatenate((true_cars_overlay, true_cars_overlay, np.zeros(true_cars_overlay.shape), true_cars_overlay * 0.5), axis=2)
@@ -373,17 +401,17 @@ def plot_sample(X, y, preds, binary_preds, ix=None):
 def plot_labels(X, y, preds):
     width = 41
     height = 41
-    image_array = np.zeros((width*160-(width-1)*14, height*160-(height-1)*14, 3), dtype=np.int)
+    #image_array = np.zeros((width*160-(width-1)*14, height*160-(height-1)*14, 3), dtype=np.int)
     labels_array = np.zeros((width*160-(width-1)*14, height*160-(height-1)*14, 6), dtype=np.bool)
     preds_array = np.zeros((width*160-(width-1)*14, height*160-(height-1)*14, 6))
     for i in range(width):
         for j in range(height):
-            image_array[i*(160-14):(i+1)*(160-14)+14, j*(160-14):(j+1)*(160-14)+14, :] = X[i*41+j]
+            #image_array[i*(160-14):(i+1)*(160-14)+14, j*(160-14):(j+1)*(160-14)+14, :] = X[i*41+j]
             labels_array[i*(160-14):(i+1)*(160-14)+14, j*(160-14):(j+1)*(160-14)+14, :] = y[i*41+j]
             preds_array[i*(160-14):i*(160-14)+14, j*(160-14):(j+1)*(160-14)+14, :] += preds[i*41+j, :14, :, :]
             preds_array[i*(160-14):(i+1)*(160-14)+14, j*(160-14):j*(160-14)+14, :] += preds[i*41+j, :, :14, :]
             preds_array[i*(160-14)+14:(i+1)*(160-14)+14, j*(160-14)+14:(j+1)*(160-14)+14, :] += preds[i*41+j, 14:, 14:, :]
-
+    
     fig, ax = plt.subplots(1, 1, figsize=(20, 20))
     ax.imshow(image_array, interpolation="bilinear")
     ax.grid(False)
@@ -391,7 +419,7 @@ def plot_labels(X, y, preds):
     ax.set_yticks([])
     plt.savefig("ensemble_full_image2.png", bbox_inches="tight")
     plt.show()
-
+    
     # cars = yellow
     true_cars_overlay = (labels_array[..., 0] > 0).reshape((width*(160-14)+14, height*(160-14)+14, 1))
     true_cars_overlay_rgba = np.concatenate((true_cars_overlay, true_cars_overlay, np.zeros(true_cars_overlay.shape), true_cars_overlay), axis=2)
@@ -450,15 +478,17 @@ def plot_labels(X, y, preds):
     ax[1].grid(False)
     ax[1].set_xticks([])
     ax[1].set_yticks([])
-    plt.savefig("ensemble_full_labels2.png", bbox_inches="tight")
+    plt.savefig("ensemble_full_labels0.png", bbox_inches="tight")
     plt.show()
 
 
-#get_acc(y, preds_train_1_t, "U-net")
-#get_acc(y, preds_train_2_t, "DeepLab")
-#get_acc(y, preds_train_t, "Ensemble")
+get_acc(y, preds_train_1_t, "U-net")
+get_acc(y, preds_train_2_t, "DeepLab")
+get_acc(y, preds_train_t, "Ensemble")
+get_acc(y, preds_val_t, "Ensemble val")
+get_acc(y, preds_test_t, "Ensemble test")
 
-#plot_labels(X, y, preds_train_t)
+plot_labels(X, y, preds_test_t)
 
 
 def plot_errors(X, y, preds):
